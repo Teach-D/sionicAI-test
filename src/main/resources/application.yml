@@ -13,3 +13,7 @@ app:
   jwt:
     secret: ${JWT_SECRET:dev-secret-key-must-be-at-least-256-bits-long-for-hs256}
     expiration-ms: 3600000
+  openai:
+    api-key: ${OPENAI_API_KEY}
+    base-url: https://api.openai.com/v1
+    system-prompt: "You are a helpful AI assistant."

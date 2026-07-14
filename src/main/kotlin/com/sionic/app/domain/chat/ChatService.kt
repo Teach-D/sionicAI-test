@@ -1,0 +1,150 @@
+package com.sionic.app.domain.chat
+
+import com.sionic.app.domain.chat.dto.ChatResponse
+import com.sionic.app.domain.chat.dto.ChatInThread
+import com.sionic.app.domain.chat.dto.CreateChatRequest
+import com.sionic.app.domain.chat.dto.PagedResponse
+import com.sionic.app.domain.chat.dto.ThreadWithChatsResponse
+import com.sionic.app.domain.user.User
+import com.sionic.app.domain.user.UserRepository
+import com.sionic.app.exception.ForbiddenException
+import com.sionic.app.exception.ThreadNotFoundException
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
+import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+import java.time.ZonedDateTime
+import java.time.temporal.ChronoUnit
+import java.util.concurrent.Executors
+
+@Service
+class ChatService(
+    private val userRepository: UserRepository,
+    private val threadRepository: ThreadRepository,
+    private val chatRepository: ChatRepository,
+    private val openAiClient: OpenAiClient,
+    transactionManager: PlatformTransactionManager,
+    @Value("\${app.openai.system-prompt}") private val systemPrompt: String
+) {
+    private val executor = Executors.newCachedThreadPool()
+    private val tx = TransactionTemplate(transactionManager)
+
+    @Transactional
+    fun createChat(request: CreateChatRequest, userEmail: String): ChatResponse {
+        val user = getUser(userEmail)
+        val thread = resolveThread(user)
+        val messages = buildMessages(thread, request.question)
+        val answer = openAiClient.complete(request.model, messages)
+        val chat = chatRepository.save(Chat(thread = thread, question = request.question, answer = answer))
+        thread.lastChatAt = chat.createdAt
+        threadRepository.save(thread)
+        return ChatResponse.from(chat)
+    }
+
+    fun createChatStreaming(request: CreateChatRequest, userEmail: String): SseEmitter {
+        var threadId = 0L
+        var messages: List<OpenAiMessage> = emptyList()
+        tx.executeWithoutResult {
+            val user = getUser(userEmail)
+            val thread = resolveThread(user)
+            threadId = thread.id
+            messages = buildMessages(thread, request.question)
+        }
+
+        val emitter = SseEmitter(-1L)
+        executor.submit {
+            try {
+                openAiClient.stream(request.model, messages, emitter) { fullAnswer ->
+                    tx.executeWithoutResult {
+                        val thread = threadRepository.findById(threadId).orElseThrow()
+                        val chat = chatRepository.save(
+                            Chat(thread = thread, question = request.question, answer = fullAnswer)
+                        )
+                        thread.lastChatAt = chat.createdAt
+                        threadRepository.save(thread)
+                    }
+                }
+            } catch (e: Exception) {
+                runCatching {
+                    emitter.send(SseEmitter.event().data("[ERROR]"))
+                    emitter.complete()
+                }
+            }
+        }
+        return emitter
+    }
+
+    @Transactional(readOnly = true)
+    fun getThreads(
+        userEmail: String,
+        isAdmin: Boolean,
+        page: Int,
+        size: Int,
+        direction: String
+    ): PagedResponse<ThreadWithChatsResponse> {
+        val sortDir = if (direction.uppercase() == "ASC") Sort.Direction.ASC else Sort.Direction.DESC
+        val pageable = PageRequest.of(page, size, Sort.by(sortDir, "createdAt"))
+
+        val threadPage = if (isAdmin) {
+            threadRepository.findAll(pageable)
+        } else {
+            threadRepository.findAllByUser(getUser(userEmail), pageable)
+        }
+
+        val chatsMap = chatRepository
+            .findAllByThreadInOrderByCreatedAtAsc(threadPage.content)
+            .groupBy { it.thread.id }
+
+        val content = threadPage.content.map { thread ->
+            ThreadWithChatsResponse(
+                threadId = thread.id,
+                createdAt = thread.createdAt,
+                chats = (chatsMap[thread.id] ?: emptyList()).map { ChatInThread.from(it) }
+            )
+        }
+
+        return PagedResponse(
+            content = content,
+            page = threadPage.number,
+            size = threadPage.size,
+            totalElements = threadPage.totalElements,
+            totalPages = threadPage.totalPages
+        )
+    }
+
+    @Transactional
+    fun deleteThread(threadId: Long, userEmail: String) {
+        val thread = threadRepository.findById(threadId)
+            .orElseThrow { ThreadNotFoundException(threadId) }
+        if (thread.user.email != userEmail) throw ForbiddenException()
+        chatRepository.deleteAllByThread(thread)
+        threadRepository.delete(thread)
+    }
+
+    private fun getUser(email: String): User =
+        userRepository.findByEmail(email).orElseThrow { IllegalStateException("사용자를 찾을 수 없습니다: $email") }
+
+    private fun resolveThread(user: User): Thread {
+        val latest = threadRepository.findFirstByUserOrderByLastChatAtDesc(user).orElse(null)
+        return if (latest == null || ChronoUnit.MINUTES.between(latest.lastChatAt, ZonedDateTime.now()) >= 30) {
+            threadRepository.save(Thread(user = user))
+        } else {
+            latest
+        }
+    }
+
+    private fun buildMessages(thread: Thread, question: String): List<OpenAiMessage> {
+        val history = chatRepository.findAllByThreadOrderByCreatedAtAsc(thread)
+        val messages = mutableListOf(OpenAiMessage("system", systemPrompt))
+        for (chat in history) {
+            messages += OpenAiMessage("user", chat.question)
+            messages += OpenAiMessage("assistant", chat.answer)
+        }
+        messages += OpenAiMessage("user", question)
+        return messages
+    }
+}

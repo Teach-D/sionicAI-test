@@ -27,4 +27,19 @@ class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.UNAUTHORIZED)
     fun handleBadCredentials(e: BadCredentialsException): ErrorResponse =
         ErrorResponse(status = 401, code = "UNAUTHORIZED", message = e.message ?: "이메일 또는 비밀번호가 올바르지 않습니다.")
+
+    @ExceptionHandler(ThreadNotFoundException::class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    fun handleThreadNotFound(e: ThreadNotFoundException): ErrorResponse =
+        ErrorResponse(status = 404, code = "THREAD_NOT_FOUND", message = e.message ?: "스레드를 찾을 수 없습니다.")
+
+    @ExceptionHandler(ForbiddenException::class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    fun handleForbidden(e: ForbiddenException): ErrorResponse =
+        ErrorResponse(status = 403, code = "FORBIDDEN", message = e.message ?: "접근 권한이 없습니다.")
+
+    @ExceptionHandler(OpenAiException::class)
+    @ResponseStatus(HttpStatus.BAD_GATEWAY)
+    fun handleOpenAi(e: OpenAiException): ErrorResponse =
+        ErrorResponse(status = 502, code = "OPENAI_ERROR", message = e.message ?: "OpenAI API 호출에 실패했습니다.")
 }
