@@ -1,0 +1,12 @@
+spring:
+  profiles:
+    active: dev
+  application:
+    name: sionic-app
+  jpa:
+    open-in-view: false
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:dev-secret-key-must-be-at-least-256-bits-long-for-hs256}
+    expiration-ms: 3600000
