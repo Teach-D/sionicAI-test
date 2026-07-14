@@ -5,6 +5,9 @@ import com.sionic.app.domain.chat.dto.ChatInThread
 import com.sionic.app.domain.chat.dto.CreateChatRequest
 import com.sionic.app.domain.chat.dto.PagedResponse
 import com.sionic.app.domain.chat.dto.ThreadWithChatsResponse
+import com.sionic.app.domain.report.ActivityEventType
+import com.sionic.app.domain.report.ActivityLog
+import com.sionic.app.domain.report.ActivityLogRepository
 import com.sionic.app.domain.user.User
 import com.sionic.app.domain.user.UserRepository
 import com.sionic.app.exception.ForbiddenException
@@ -27,6 +30,7 @@ class ChatService(
     private val threadRepository: ThreadRepository,
     private val chatRepository: ChatRepository,
     private val openAiClient: OpenAiClient,
+    private val activityLogRepository: ActivityLogRepository,
     transactionManager: PlatformTransactionManager,
     @Value("\${app.openai.system-prompt}") private val systemPrompt: String
 ) {
@@ -42,6 +46,7 @@ class ChatService(
         val chat = chatRepository.save(Chat(thread = thread, question = request.question, answer = answer))
         thread.lastChatAt = chat.createdAt
         threadRepository.save(thread)
+        activityLogRepository.save(ActivityLog(user = user, eventType = ActivityEventType.CHAT_CREATED))
         return ChatResponse.from(chat)
     }
 
@@ -66,6 +71,7 @@ class ChatService(
                         )
                         thread.lastChatAt = chat.createdAt
                         threadRepository.save(thread)
+                        activityLogRepository.save(ActivityLog(user = thread.user, eventType = ActivityEventType.CHAT_CREATED))
                     }
                 }
             } catch (e: Exception) {
