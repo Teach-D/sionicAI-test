@@ -38,16 +38,16 @@ Claude Code가 이 저장소에서 작업할 때 반드시 이 문서를 먼저 
 
 ## 기술 스택
 
-| 분류 | 선택 |
-|---|---|
-| 언어 | Kotlin 2.1, JVM 21 |
-| 프레임워크 | Spring Boot 3.4 |
-| 빌드 | Gradle Kotlin DSL |
+| 분류 | 선택                                |
+|---|-----------------------------------|
+| 언어 | Kotlin 2.1, JVM 17                 |
+| 프레임워크 | Spring Boot 3.4                   |
+| 빌드 | Gradle Kotlin DSL                 |
 | 인증 | Spring Security + JWT (jjwt 0.12) |
-| ORM | Spring Data JPA + Hibernate |
-| DB (dev) | H2 in-memory (`MODE=PostgreSQL`) |
-| DB (prod) | PostgreSQL |
-| AI | OpenAI API (Chat Completions) |
+| ORM | Spring Data JPA + Hibernate       |
+| DB (dev) | H2 in-memory (`MODE=PostgreSQL`)  |
+| DB (prod) | PostgreSQL                        |
+| AI | OpenAI API (Chat Completions)     |
 
 ---
 
