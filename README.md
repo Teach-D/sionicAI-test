@@ -41,6 +41,61 @@ src/main/kotlin/com/sionic/app/
 
 ---
 
+## 데이터 모델 (전체 ERD)
+
+```mermaid
+erDiagram
+    User ||--o{ Thread : owns
+    User ||--o{ Feedback : writes
+    User ||--o{ ActivityLog : generates
+    Thread ||--o{ Chat : contains
+    Chat ||--o{ Feedback : receives
+
+    User {
+        Long id PK
+        String email UK
+        String password
+        String name
+        UserRole role "MEMBER | ADMIN"
+        ZonedDateTime createdAt
+    }
+    Thread {
+        Long id PK
+        Long user_id FK
+        ZonedDateTime createdAt
+        ZonedDateTime lastChatAt "30분 유지 판정 기준"
+    }
+    Chat {
+        Long id PK
+        Long thread_id FK
+        String question "TEXT"
+        String answer "TEXT"
+        ZonedDateTime createdAt
+    }
+    Feedback {
+        Long id PK
+        Long user_id FK
+        Long chat_id FK
+        Boolean isPositive
+        FeedbackStatus status "PENDING | RESOLVED"
+        ZonedDateTime createdAt
+    }
+    ActivityLog {
+        Long id PK
+        Long user_id FK
+        ActivityEventType eventType "SIGN_UP | LOGIN | CHAT_CREATED"
+        ZonedDateTime createdAt
+    }
+```
+
+**주요 제약**
+
+- `Feedback`은 `(user_id, chat_id)`에 UNIQUE 제약 — 한 유저는 하나의 chat에 하나의 피드백만 생성 가능. 반면 하나의 chat에는 서로 다른 유저의 피드백 N개가 존재 가능.
+- `Thread.lastChatAt`은 스레드 재사용 판정(마지막 chat으로부터 30분)에 사용되는 파생 컬럼이며, chat 생성 시점에 갱신됩니다.
+- 각 도메인의 상세 ERD는 `docs/{도메인}/erd.md`를 참조하세요.
+
+---
+
 ## API 요약
 
 | 메서드 | 경로 | 설명 | 권한 |
