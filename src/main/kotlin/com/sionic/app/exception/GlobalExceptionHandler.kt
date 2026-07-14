@@ -1,6 +1,7 @@
 package com.sionic.app.exception
 
 import org.springframework.http.HttpStatus
+import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -42,4 +43,29 @@ class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.BAD_GATEWAY)
     fun handleOpenAi(e: OpenAiException): ErrorResponse =
         ErrorResponse(status = 502, code = "OPENAI_ERROR", message = e.message ?: "OpenAI API 호출에 실패했습니다.")
+
+    @ExceptionHandler(com.sionic.app.exception.ChatNotFoundException::class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    fun handleChatNotFound(e: com.sionic.app.exception.ChatNotFoundException): ErrorResponse =
+        ErrorResponse(status = 404, code = "CHAT_NOT_FOUND", message = e.message ?: "대화를 찾을 수 없습니다.")
+
+    @ExceptionHandler(com.sionic.app.exception.FeedbackNotFoundException::class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    fun handleFeedbackNotFound(e: com.sionic.app.exception.FeedbackNotFoundException): ErrorResponse =
+        ErrorResponse(status = 404, code = "FEEDBACK_NOT_FOUND", message = e.message ?: "피드백을 찾을 수 없습니다.")
+
+    @ExceptionHandler(com.sionic.app.exception.FeedbackAlreadyExistsException::class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun handleFeedbackAlreadyExists(e: com.sionic.app.exception.FeedbackAlreadyExistsException): ErrorResponse =
+        ErrorResponse(status = 409, code = "FEEDBACK_ALREADY_EXISTS", message = e.message ?: "해당 대화에 이미 피드백이 존재합니다.")
+
+    @ExceptionHandler(IllegalArgumentException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleIllegalArgument(e: IllegalArgumentException): ErrorResponse =
+        ErrorResponse(status = 400, code = "VALIDATION_ERROR", message = e.message ?: "잘못된 요청입니다.")
+
+    @ExceptionHandler(HttpMessageNotReadableException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleHttpMessageNotReadable(e: HttpMessageNotReadableException): ErrorResponse =
+        ErrorResponse(status = 400, code = "VALIDATION_ERROR", message = "요청 바디를 읽을 수 없습니다.")
 }
