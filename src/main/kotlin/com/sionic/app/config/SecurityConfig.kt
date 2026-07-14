@@ -35,6 +35,7 @@ class SecurityConfig(
                 it.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
                 it.requestMatchers("/h2-console/**").permitAll()
                 it.requestMatchers(HttpMethod.PATCH, "/api/feedbacks/*/status").hasRole("ADMIN")
+                it.requestMatchers("/api/admin/**").hasRole("ADMIN")
                 it.anyRequest().authenticated()
             }
             .headers { it.frameOptions { frame -> frame.disable() } }
