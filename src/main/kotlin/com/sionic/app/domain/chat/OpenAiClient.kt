@@ -30,7 +30,13 @@ class OpenAiClient(private val openAiRestClient: RestClient) {
         }
     }
 
-    fun stream(model: String, messages: List<OpenAiMessage>, emitter: SseEmitter, onComplete: (String) -> Unit) {
+    fun stream(
+        model: String,
+        messages: List<OpenAiMessage>,
+        emitter: SseEmitter,
+        isCancelled: () -> Boolean,
+        onComplete: (String) -> Unit
+    ) {
         try {
             openAiRestClient.post()
                 .uri("/chat/completions")
@@ -41,27 +47,30 @@ class OpenAiClient(private val openAiRestClient: RestClient) {
                     }
                     val sb = StringBuilder()
                     response.body.bufferedReader().use { reader ->
-                        reader.forEachLine { line ->
-                            if (!line.startsWith("data: ")) return@forEachLine
+                        // forEachLine 대신 lineSequence + break로 취소 시 즉시 루프 이탈 → use가 reader를 close하여 upstream 연결 해제
+                        for (line in reader.lineSequence()) {
+                            if (isCancelled()) return@exchange
+                            if (!line.startsWith("data: ")) continue
                             val data = line.removePrefix("data: ").trim()
                             if (data == "[DONE]") {
                                 onComplete(sb.toString())
-                                emitter.send(SseEmitter.event().data("[DONE]"))
-                                emitter.complete()
-                                return@forEachLine
+                                runCatching { emitter.send(SseEmitter.event().data("[DONE]")) }
+                                runCatching { emitter.complete() }
+                                return@exchange
                             }
                             val content = runCatching {
                                 mapper.readTree(data)?.at("/choices/0/delta/content")
                                     ?.asText()?.takeIf { it.isNotEmpty() }
-                            }.getOrNull() ?: return@forEachLine
+                            }.getOrNull() ?: continue
                             sb.append(content)
-                            emitter.send(SseEmitter.event().data(content))
+                            runCatching { emitter.send(SseEmitter.event().data(content)) }
                         }
                     }
-                    // 스트림이 [DONE] 없이 종료된 경우
+                    // [DONE] 없이 스트림 종료
                     runCatching { emitter.complete() }
                 }
         } catch (e: Exception) {
+            if (isCancelled()) return
             runCatching {
                 emitter.send(SseEmitter.event().data("[ERROR]"))
                 emitter.complete()
