@@ -12,6 +12,7 @@ import com.sionic.app.domain.user.User
 import com.sionic.app.domain.user.UserRepository
 import com.sionic.app.exception.ForbiddenException
 import com.sionic.app.exception.ThreadNotFoundException
+import jakarta.annotation.PreDestroy
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
@@ -22,7 +23,12 @@ import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 @Service
 class ChatService(
@@ -32,10 +38,25 @@ class ChatService(
     private val openAiClient: OpenAiClient,
     private val activityLogRepository: ActivityLogRepository,
     transactionManager: PlatformTransactionManager,
-    @Value("\${app.openai.system-prompt}") private val systemPrompt: String
+    @Value("\${app.openai.system-prompt}") private val systemPrompt: String,
+    @Value("\${app.chat.stream.pool-size}") private val streamPoolSize: Int,
+    @Value("\${app.chat.stream.timeout-ms}") private val streamTimeoutMs: Long
 ) {
-    private val executor = Executors.newCachedThreadPool()
+    private val executor: ExecutorService = run {
+        val counter = AtomicInteger()
+        Executors.newFixedThreadPool(streamPoolSize) { r ->
+            Thread(r, "chat-stream-${counter.incrementAndGet()}").apply { isDaemon = true }
+        }
+    }
     private val tx = TransactionTemplate(transactionManager)
+
+    @PreDestroy
+    fun shutdown() {
+        executor.shutdown()
+        if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+            executor.shutdownNow()
+        }
+    }
 
     @Transactional
     fun createChat(request: CreateChatRequest, userEmail: String): ChatResponse {
@@ -60,26 +81,37 @@ class ChatService(
             messages = buildMessages(thread, request.question)
         }
 
-        val emitter = SseEmitter(-1L)
-        executor.submit {
-            try {
-                openAiClient.stream(request.model, messages, emitter) { fullAnswer ->
-                    tx.executeWithoutResult {
-                        val thread = threadRepository.findById(threadId).orElseThrow()
-                        val chat = chatRepository.save(
-                            Chat(thread = thread, question = request.question, answer = fullAnswer)
-                        )
-                        thread.lastChatAt = chat.createdAt
-                        threadRepository.save(thread)
-                        activityLogRepository.save(ActivityLog(user = thread.user, eventType = ActivityEventType.CHAT_CREATED))
+        val emitter = SseEmitter(streamTimeoutMs)
+        val cancelled = AtomicBoolean(false)
+        emitter.onTimeout { cancelled.set(true) }
+        emitter.onError { cancelled.set(true) }
+        emitter.onCompletion { cancelled.set(true) }
+
+        try {
+            executor.submit {
+                try {
+                    openAiClient.stream(request.model, messages, emitter, cancelled::get) { fullAnswer ->
+                        if (cancelled.get()) return@stream
+                        tx.executeWithoutResult {
+                            val thread = threadRepository.findById(threadId).orElseThrow()
+                            val chat = chatRepository.save(
+                                Chat(thread = thread, question = request.question, answer = fullAnswer)
+                            )
+                            thread.lastChatAt = chat.createdAt
+                            threadRepository.save(thread)
+                            activityLogRepository.save(ActivityLog(user = thread.user, eventType = ActivityEventType.CHAT_CREATED))
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (cancelled.get()) return@submit
+                    runCatching {
+                        emitter.send(SseEmitter.event().data("[ERROR]"))
+                        emitter.complete()
                     }
                 }
-            } catch (e: Exception) {
-                runCatching {
-                    emitter.send(SseEmitter.event().data("[ERROR]"))
-                    emitter.complete()
-                }
             }
+        } catch (e: RejectedExecutionException) {
+            runCatching { emitter.completeWithError(e) }
         }
         return emitter
     }
